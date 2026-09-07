@@ -109,9 +109,9 @@ CREATE TABLE "catalog"."sky_regions" (
 CREATE TABLE "core"."event_annotations" (
 	"id" bigserial PRIMARY KEY NOT NULL,
 	"lab_id" uuid NOT NULL,
-	"event_id" bigserial NOT NULL,
+	"event_id" bigint NOT NULL,
 	"user_id" uuid NOT NULL,
-	"parent_id" bigserial,
+	"parent_id" bigint,
 	"content" text NOT NULL,
 	"tags" text[] DEFAULT '{}' NOT NULL,
 	"is_pinned" boolean DEFAULT false NOT NULL,
