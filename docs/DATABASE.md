@@ -24,7 +24,7 @@
 | `event_type` | text | GRB / GW / FRB / NU |
 | `detection_time` | timestamptz | Original observatory time |
 | `ra` / `dec` | float8 | Right ascension / declination [°] |
-| `sky_position` | geography(POINT) | Computed via trigger: ST_MakePoint(ra,dec) |
+| `sky_position` | text | **Legacy, unused.** Always NULL — see note below |
 | `error_radius` | float8 | Localization uncertainty [arcmin] |
 | `snr` | float8 | Signal-to-noise ratio |
 | `far` | float8 | False alarm rate [Hz] |
@@ -52,8 +52,28 @@
 **Indexes:**
 - `(id)` PK
 - `(event_id)` UNIQUE (upsert target)
-- `(sky_position)` GiST — PostGIS cone search
+- ⚠️ No index on `(sky_position)` — the column is unused (see note below)
 - ⚠️ Missing: `(lab_id)`, `(detection_time DESC)`, `(event_type)`, `(lifecycle)`, `(source)`
+
+> **`sky_position` is dead scaffolding — do not build on it.**
+>
+> It was designed as a PostGIS `geography(POINT, 4326)` column with a GiST
+> index and an `ST_MakePoint(ra, dec)` trigger, for cone search. That plan was
+> abandoned nine days later (commit `b079e75`, 2026-06-08) when the schema's
+> `geographyPoint` customType was switched to return `text`; migration
+> `0001_overrated_ultimo.sql` converts the column to `text` immediately after
+> `0000` creates it. Verified against the live database on 2026-09-07:
+>
+> - type is `text`, not `geography`; PostGIS is **not installed**
+> - **no** GiST or other index on the column
+> - **no** trigger on `core.events` at all
+> - **0 of 313** event rows have it populated
+> - **no** application code reads or writes it
+>
+> Proximity matching is real and works, but does not use this column. It is
+> computed in JavaScript from the `ra`/`dec` columns by `angularSeparationDeg()`
+> (haversine) in `artifacts/api-server/src/science/correlationEngine/scorer.ts`,
+> feeding a Gaussian spatial score against quadrature-summed error radii.
 
 #### `core.event_detections`
 TimescaleDB hypertable partitioned by `detected_at`. Stores multi-observatory detections per event. Columns: `event_id`, `lab_id`, `observatory_id`, `detected_at`, `ra`, `dec`, `snr`, `far`, `raw_payload` (jsonb).

@@ -535,7 +535,7 @@ erDiagram
 | `detection_time` | timestamptz | NOT NULL | Original observatory time |
 | `ra` | float8 | NOT NULL | Right ascension [°] |
 | `dec` | float8 | NOT NULL | Declination [°] |
-| `sky_position` | geography(POINT) | Computed | ST_MakePoint(ra,dec) via trigger |
+| `sky_position` | text | Always NULL | **Legacy, unused** — no trigger, no index, no reader. See docs/DATABASE.md |
 | `error_radius` | float8 | NOT NULL | Localization uncertainty [arcmin] |
 | `snr` | float8 | NOT NULL | Signal-to-noise ratio |
 | `far` | float8 | NOT NULL | False alarm rate [Hz] |
@@ -567,7 +567,9 @@ erDiagram
 - `(event_id)` — Unique index (upsert target)
 - `(detection_time DESC)` — Recommended for time-ordered list queries
 - `(event_type)` — Recommended for type filtering
-- `(sky_position)` — GiST index for PostGIS cone search (defined in migration SQL)
+- ⚠️ No `(sky_position)` index exists. A GiST index for PostGIS cone search was planned
+  and never built; the column is unused legacy. Proximity matching uses `angularSeparationDeg()`
+  (haversine over `ra`/`dec`) in `correlationEngine/scorer.ts`. See docs/DATABASE.md.
 
 **`core.event_detections`** — TimescaleDB hypertable for multi-observatory detections of the same event
 
