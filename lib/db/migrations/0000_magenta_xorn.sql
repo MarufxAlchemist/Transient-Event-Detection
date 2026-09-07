@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS ltree;
+--> statement-breakpoint
 CREATE SCHEMA "alerts";
 --> statement-breakpoint
 CREATE SCHEMA "audit";
@@ -206,7 +208,7 @@ CREATE TABLE "core"."events" (
 	"detection_time" timestamp with time zone NOT NULL,
 	"ra" double precision NOT NULL,
 	"dec" double precision NOT NULL,
-	"sky_position" geography(POINT, 4326),
+	"sky_position" text,
 	"error_radius" double precision NOT NULL,
 	"snr" double precision NOT NULL,
 	"far" double precision NOT NULL,
