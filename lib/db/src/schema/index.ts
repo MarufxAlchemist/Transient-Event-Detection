@@ -106,6 +106,7 @@ export {
   circularExtractionsRelations,
   CIRCULAR_ASSOCIATION_METHODS,
   CIRCULAR_EXTRACTION_STATUSES,
+  CIRCULAR_EXTRACTORS,
   CIRCULAR_EXTRACTION_FAILURE_KINDS,
 } from "./circulars.js";
 export type {
@@ -117,6 +118,7 @@ export type {
   InsertCircularExtraction,
   CircularAssociationMethod,
   CircularExtractionStatus,
+  CircularExtractor,
   CircularExtractionFailureKind,
 } from "./circulars.js";
 

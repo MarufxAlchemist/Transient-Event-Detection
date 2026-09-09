@@ -241,6 +241,30 @@ export const CIRCULAR_EXTRACTION_STATUSES = [
 export type CircularExtractionStatus = (typeof CIRCULAR_EXTRACTION_STATUSES)[number];
 
 /**
+ * Which extractor owns a row — and therefore which worker claims it.
+ *
+ * These are two INDEPENDENT extractions of the same circular, not a primary
+ * and a fallback. They coexist because content_hash includes the model name,
+ * so one circular yields a distinct row per extractor.
+ *
+ * They do NOT share a queue. extractionWorker.ts drains its claimed batch
+ * sequentially, and the OpenAI provider's worst case (retries+1 attempts x
+ * timeout, per model) is minutes against Gemini's 45 s — one slow OpenAI job
+ * would stall every Gemini job behind it. Each extractor gets its own worker
+ * and its own claim query filtered on this column. Constrained in the
+ * database by chk_extraction_extractor (migration 0024) so a typo cannot
+ * silently create a third, unclaimed queue.
+ */
+export const CIRCULAR_EXTRACTORS = [
+  /** services/ai/circular-extraction-agent.ts — the original Gemini path. */
+  "gemini",
+  /** astro-colibri-circular-parser's OpenAI photometry extraction (Priority #8). */
+  "astro-colibri-openai",
+] as const;
+
+export type CircularExtractor = (typeof CIRCULAR_EXTRACTORS)[number];
+
+/**
  * Why an attempt failed, and therefore whether retrying can help.
  *
  * `configuration` and `invalid_response` are not transient: retrying a missing
@@ -275,6 +299,17 @@ export const circularExtractions = coreSchema.table(
     /** Which model produced this, so a claim can be traced to its author. */
     provider: text("provider"),
     modelName: text("model_name"),
+
+    /**
+     * Which extractor owns this row (migration 0024). The DEFAULT exists only
+     * to backfill rows that predate the column — every writer sets it
+     * explicitly, because a default that happens to be right today is a
+     * landmine the day a third extractor is added.
+     */
+    extractor: text("extractor")
+      .notNull()
+      .default("gemini")
+      .$type<CircularExtractor>(),
     schemaVersion: integer("schema_version").notNull(),
     promptVersion: integer("prompt_version").notNull(),
     /** SHA-256(subject+body+schemaVersion+promptVersion+model). */

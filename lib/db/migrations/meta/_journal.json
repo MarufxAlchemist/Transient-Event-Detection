@@ -169,6 +169,13 @@
       "when": 1784884352899,
       "tag": "0023_extraction_skipped_status",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784884352900,
+      "tag": "0024_extraction_extractor",
+      "breakpoints": true
     }
   ]
 }
