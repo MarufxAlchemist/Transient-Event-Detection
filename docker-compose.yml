@@ -122,6 +122,13 @@ services:
     environment:
       GCN_CLIENT_ID:     ${GCN_CLIENT_ID}
       GCN_CLIENT_SECRET: ${GCN_CLIENT_SECRET}
+      # Priority #8 — this service is the one that actually calls OpenAI, via
+      # /api/science/openai-circular-extraction. Defaulted OFF/empty so the
+      # path is a no-op unless a deployment sets them deliberately.
+      CIRCULAR_OPENAI_EXTRACTION_ENABLED: ${CIRCULAR_OPENAI_EXTRACTION_ENABLED:-false}
+      OPENAI_API_KEY:                     ${OPENAI_API_KEY:-}
+      GCN_PHOTOMETRY_AI_TIMEOUT_SECONDS:  ${GCN_PHOTOMETRY_AI_TIMEOUT_SECONDS:-60}
+      GCN_PHOTOMETRY_AI_RETRIES:          ${GCN_PHOTOMETRY_AI_RETRIES:-1}
 
     ports:
       - "8001:8001"
@@ -161,6 +168,10 @@ services:
       GOOGLE_CLIENT_ID:     ${GOOGLE_CLIENT_ID}
 
       GEMINI_API_KEY:       ${GEMINI_API_KEY}
+      # Priority #8 — billed OpenAI extraction. Defaulted OFF/empty: a compose
+      # file that can turn on spending by omission is not a safe default.
+      CIRCULAR_OPENAI_EXTRACTION_ENABLED: ${CIRCULAR_OPENAI_EXTRACTION_ENABLED:-false}
+      OPENAI_API_KEY:       ${OPENAI_API_KEY:-}
       GEMINI_MODEL:         ${GEMINI_MODEL:-gemini-2.5-flash}
       GEMINI_TIMEOUT_MS:    ${GEMINI_TIMEOUT_MS:-45000}
 
