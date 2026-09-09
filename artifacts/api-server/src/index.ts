@@ -11,6 +11,7 @@ import { startKafkaConsumer } from "./lib/kafkaConsumer";
 import { runBootstrap } from "./lib/bootstrap";
 import { startDispatcher } from "./notifications/notificationDispatcher";
 import { startExtractionWorker } from "./circulars/extractionWorker";
+import { startOpenaiExtractionWorker } from "./circulars/openaiExtractionWorker";
 import { reportEmailConfig } from "./notifications/emailService";
 
 const rawPort = process.env["PORT"];
@@ -116,6 +117,14 @@ server.listen(port, () => {
   // extraction rows; a total provider outage leaves the circulars stored,
   // associated and fully readable with their enrichment marked failed.
   startExtractionWorker();
+
+  // The second, independent extractor (Priority #8). Its own worker and
+  // cadence: its jobs run for minutes and must never sit behind Gemini's,
+  // or ahead of them. Returns immediately unless
+  // CIRCULAR_OPENAI_EXTRACTION_ENABLED is exactly "true", which is the
+  // state everywhere except the designated deployment machine — so on every
+  // other environment this line starts nothing and can bill nothing.
+  startOpenaiExtractionWorker();
 
   // ── BOOTSTRAP SEED ───────────────────────────────────────────────────────
   // Inserts up to 10 historical events from recent_events.json only when

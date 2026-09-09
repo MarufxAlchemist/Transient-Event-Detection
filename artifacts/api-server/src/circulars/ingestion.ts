@@ -264,6 +264,11 @@ export async function enqueueExtraction(
       .values({
         circularPk: circular.id,
         status: "pending",
+        // Set explicitly, never left to the column default. The default exists
+        // to backfill rows predating migration 0024; relying on it here would
+        // become a landmine the day a third extractor is added and nobody
+        // remembers the default still says "gemini".
+        extractor: "gemini",
         schemaVersion: EXTRACTION_SCHEMA_VERSION,
         promptVersion: EXTRACTION_PROMPT_VERSION,
         contentHash,
@@ -364,6 +369,8 @@ export async function recordSkippedExtraction(
       .values({
         circularPk: circular.id,
         status: "skipped",
+        // The cost prefilter is a decision about the Gemini path specifically.
+        extractor: "gemini",
         schemaVersion: EXTRACTION_SCHEMA_VERSION,
         promptVersion: EXTRACTION_PROMPT_VERSION,
         contentHash: extractionContentHash(circular, modelName),
