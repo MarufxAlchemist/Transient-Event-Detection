@@ -249,3 +249,48 @@ instance, caching only `available: true` results.
 are down" are different problems, mirroring how `routes/events.ts` separates a
 missing `GEMINI_API_KEY` from a provider error), `502` upstream unreachable,
 `200` with `{ available, csvUrl, votableUrl, plotUrl }`.
+
+---
+
+## 6. Retest log
+
+Appended per §4's recipe. The analysis above is left as written; each entry
+records only what that attempt did.
+
+### 2026-09-09 — still blocked, but the failure mode changed
+
+One call (`trigger_id=1126853`) plus two status polls, per the recipe.
+
+```
+initiate      HTTP 200, text/event-stream
+              {"lightcurve_id": "4838711d", "status": "200",
+               "message": "the lightcurve is being generated and to see the
+                           progress please go here: .../lightcurve_status/4838711d."}
++30s          HTTP 200 {"progress": 0.8, "message": "ATLAS: Task queued with position 6780.", "status": "in_progress"}
++2min         HTTP 200 {"progress": 0.8, "message": "ATLAS: Task queued with position 6780.", "status": "in_progress"}
+```
+
+| Decision-rule check | Result |
+|---|---|
+| Survived past 30 s without being reaped | **yes** |
+| Reaped at either poll | no |
+| Reached a terminal state | no |
+| `csv_url` / `votable_url` present | **no** |
+
+**Not resolved: no payload was produced, so the field names in §3.2 remain
+unobserved and the warning against writing a parser for them still stands.**
+
+Two things did change from all five attempts on 2026-09-07:
+
+* **The task was not reaped.** Every earlier attempt vanished into
+  `"No such task_id"` — four of them within 30 s. This one was still alive at
+  two minutes. §4 names that as "new information worth investigating further".
+* **The status message is different in kind.** Earlier attempts stalled at
+  `"Completed atlas"` — a pipeline step that finished and then went nowhere.
+  This one reports `"ATLAS: Task queued with position 6780."`, a queue
+  position inside the upstream survey. That is a backlog, not a stall.
+
+Whether a queue position of 6780 drains in minutes, days, or never is not
+something this retest can answer, and no further calls were made to find out.
+A next retest should poll the same recipe and compare the queue position: a
+falling number means the backlog is moving.
