@@ -267,7 +267,56 @@ services:
         max-size: "10m"
         max-file: "5"
 
-  # ── 5. Frontend (nginx serving Vite bundle + /api proxy) ──────────────────
+  # ── 5. GRB spectral fit worker (drains core.grb_fit_jobs) ─────────────────
+  #
+  # Deliberately NOT in anyone's dependency chain. It needs the database and
+  # the schema, so it waits for postgres + migrate; nothing waits for it. A
+  # spectral fit takes minutes, and no alert, API response or page render may
+  # ever block on one — the queue is the boundary between live ingestion and
+  # this service.
+  #
+  # No healthcheck: the worker exposes no port and spends most of its life
+  # either idle-polling or inside a multi-minute MultiNest run. There is
+  # nothing meaningful to probe, and a probe that timed out mid-fit would
+  # restart the container and orphan the job as 'running'.
+  grb-fit-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.grb-fit-worker
+
+    restart: unless-stopped
+
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD_URLENC}@postgres:5432/${POSTGRES_DB:-Astro-sentinel}"
+      # Where the pipeline caches TTE/poshist downloads and writes fit products.
+      DATA_BASE: /workspace/data
+      GRB_FIT_POLL_INTERVAL_SECONDS: ${GRB_FIT_POLL_INTERVAL_SECONDS:-15}
+      GRB_FIT_LOG_LEVEL: ${GRB_FIT_LOG_LEVEL:-INFO}
+      # Also set in the image; repeated here so `docker compose logs -f` stays
+      # live even if someone overrides the entrypoint.
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      # Fetching ~14 TTE files per burst from HEASARC takes minutes. The cache
+      # must outlive the container or every restart re-downloads the archive.
+      - grb_fit_data:/workspace/data
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+    networks:
+      - cosmic
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── 6. Frontend (nginx serving Vite bundle + /api proxy) ──────────────────
   frontend:
     build:
       context: .
@@ -345,6 +394,13 @@ services:
 volumes:
   postgres_data:
     # PostgreSQL data — survives container recreation.
+    # To wipe: docker compose down -v
+
+  grb_fit_data:
+    # Fermi GBM TTE/poshist download cache plus fit products (posteriors,
+    # per-GRB HDF5). core.grb_spectral_fits.hdf5_path / fit_dir point in here,
+    # so wiping this volume orphans those paths — the database rows survive
+    # with their raw_params intact, but the raw posteriors would need refitting.
     # To wipe: docker compose down -v
 
   postgres_backups:
