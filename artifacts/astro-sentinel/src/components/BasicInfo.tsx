@@ -57,6 +57,27 @@ export function buildExternalLinks(event: AstroEvent) {
   ];
 }
 
+/**
+ * The generated enum lists only GRB | GW | FRB, but core.events also holds EP,
+ * NU and OTHER, so switch on the runtime string.
+ *
+ * This previously returned "Fast radio burst" for every type that was not GRB
+ * or GW. EP/NU/OTHER use the same labels as DerivedParameters' Classification
+ * row, which has no finer class to give for them.
+ */
+function typeLabel(event: AstroEvent): string {
+  const type: string = event.eventType;
+  switch (type) {
+    case "GRB":   return "Gamma-ray burst";
+    case "GW":    return "Gravitational wave";
+    case "FRB":   return "Fast radio burst";
+    case "EP":    return "X-ray transient";
+    case "NU":    return "Neutrino candidate";
+    case "OTHER": return "Unclassified";
+    default:      return `Unclassified (${type})`;
+  }
+}
+
 export function BasicInfo({ event }: Props) {
   const externalLinks = buildExternalLinks(event);
 
@@ -64,7 +85,7 @@ export function BasicInfo({ event }: Props) {
     <div className="flex flex-col">
       <div className="p-3 space-y-0.5">
         <Row label="Event ID" value={event.eventId} />
-        <Row label="Type" value={event.eventType === "GRB" ? "Gamma-ray burst" : event.eventType === "GW" ? "Gravitational wave" : "Fast radio burst"} />
+        <Row label="Type" value={typeLabel(event)} />
         <Row label="Date [UTC]" value={formatMicrosecondDate(event.detectionTime).slice(0, 19).replace("T", " ")} />
         <Row label="Observatory" value={event.observatory} />
         <Row label="Instrument" value={`${event.observatory}/${event.eventType}`} />
