@@ -9,6 +9,7 @@ import { ValidationPanel } from "@/components/ValidationPanel";
 import { DerivedSciencePanel } from "@/components/DerivedSciencePanel";
 import { RevisionTimeline } from "@/components/RevisionTimeline";
 import { CircularsPanel } from "@/components/CircularsPanel";
+import { SpectralFitPanel } from "@/components/SpectralFitPanel";
 import { EvidenceTimeline } from "@/components/EvidenceTimeline";
 import { ResearchInterestPanel } from "@/components/ResearchInterestPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -433,6 +434,20 @@ export default function EventDetailPage() {
               wide column because circular subjects and AI extractions are
               long-form content that a narrow sidebar would make unreadable. */}
           <CircularsPanel eventId={String(event.id)} />
+
+          {/* An independent re-fit of the raw Fermi GBM data, beside what the
+              notice reported. GRB-only: there is nothing to fit otherwise. It
+              sits in the wide column because the parameter table, the prior
+              diagnostics and the re-fit form are all too wide for the sidebar,
+              and it follows the circulars because a fitted Ep is most useful
+              read against what the circulars already claim. */}
+          {event.eventType === "GRB" && (
+            <SpectralFitPanel
+              eventId={String(event.id)}
+              fluence={event.fluence}
+              t90={event.t90}
+            />
+          )}
 
           {/* The evolving scientific history of this event: every machine
               notice and every human-authored circular on one axis. It follows
