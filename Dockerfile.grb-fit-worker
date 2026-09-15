@@ -1,0 +1,196 @@
+# syntax=docker/dockerfile:1
+##############################################################################
+# Dockerfile.grb-fit-worker — GRB spectral re-fitting worker
+#
+# BUILD CONTEXT: repo root  (unified context, same as all other Dockerfiles)
+#
+# HOW THE PIPELINE CODE GETS IN: pinned git clone of a mirror we control
+# ----------------------------------------------------------------------
+# fermi-gbm-analysis is cloned at build time at an EXACT commit SHA, from a
+# mirror under this project's control rather than from upstream. A pinned clone
+# was chosen over the alternatives because:
+#
+#   * This repo already pins third-party code by version rather than vendoring
+#     it (astro-colibri-circular-parser==1.0.0 in backend/requirements.txt).
+#     fermi-gbm-analysis publishes no PyPI package, so a pinned SHA is the
+#     closest equivalent.
+#   * The upstream Dockerfile installs its OWN dependencies exactly this way
+#     (git clone of responsum / gbmgeometry / gbm_drm_gen), so this follows the
+#     pattern the pipeline itself established.
+#   * A submodule would add .gitmodules ceremony and --recursive clone
+#     requirements for third-party code.
+#   * A subtree would import a third-party project's file history into this
+#     repo and then drift from upstream silently.
+#
+# The SHA is baked in as GRB_PIPELINE_VERSION and written to every row of
+# core.grb_spectral_fits, so any stored fit can be traced back to the exact
+# pipeline code that produced it.
+#
+# WHY A MIRROR: upstream (github.com/Kamil-Nadaf/fermi-gbm-analysis) stopped
+# being publicly reachable during this integration. On 2026-09-15 it returned
+# 404 anonymously and no longer appeared in the account's public repositories,
+# after this SHA had been cloned and verified. Cached builds kept working, which
+# hid the problem; a --no-cache build failed at this clone with "could not read
+# Username". The mitigation this comment always named was to mirror the repo,
+# not to unpin it, so that is what GRB_PIPELINE_REPO now points at.
+#
+# The mirror (github.com/MarufxAlchemist/fermi-gbm-analysis-mirror) holds the
+# upstream history up to GRB_PIPELINE_SHA exactly as authored — no commits
+# added, none rewritten — so the SHA still names the same tree and every stored
+# fit stays traceable. The code is MIT-licensed (Copyright (c) 2026 Kamil Nadaf)
+# and the mirror carries that LICENSE unchanged. If upstream becomes public
+# again, GRB_PIPELINE_REPO can point back at it without changing the SHA.
+#
+# Trade-off, stated plainly: the build still needs network access and the
+# mirror to exist. The difference is that the mirror is under this project's
+# control; upstream is not.
+#
+# THE DEPENDENCY STACK BELOW IS MIRRORED FROM UPSTREAM'S OWN Dockerfile at that
+# SHA. It is duplicated rather than inherited because upstream publishes no
+# base image. Pinning the SHA bounds the drift: these layers are known to match
+# the commit named in GRB_PIPELINE_SHA.
+##############################################################################
+
+FROM python:3.12-slim
+
+ARG GRB_PIPELINE_REPO=https://github.com/MarufxAlchemist/fermi-gbm-analysis-mirror.git
+ARG GRB_PIPELINE_SHA=e36c1711d939f6a3acc0cfc7ca954c3841ea2896
+
+WORKDIR /opt
+
+# ── System dependencies (build tools + MultiNest + cfitsio) ──────────────────
+# The one place trimming upstream IS safe: the browser/font libraries it
+# installs exist for Plotly's Chrome static export in its Streamlit UI. This
+# image runs no UI and exports no images. Verified by a cold fit, which
+# exercises the plot-writing path in save_fit_plots (it emits HTML via plotly
+# and PNG via matplotlib, neither of which needs Chrome).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git build-essential swig gfortran cmake \
+        libopenblas-dev liblapack-dev \
+        libgomp1 libcfitsio-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── heapyx stack (heapy + response/geometry/DRM generators) ──────────────────
+#
+# PINNED. Upstream installs this unpinned; see the bayspec note below for why
+# that is not survivable here. 0.2.1 is the version this integration was
+# verified against.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel && \
+    pip install heapyx==0.2.1
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    git clone https://github.com/jyangch/responsum.git && \
+    pip install ./responsum && rm -rf responsum
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    git clone https://github.com/jyangch/gbmgeometry.git && \
+    pip install ./gbmgeometry && rm -rf gbmgeometry
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    git clone https://github.com/jyangch/gbm_drm_gen.git && \
+    pip install ./gbm_drm_gen && rm -rf gbm_drm_gen
+
+# PINNED, and this pin is load-bearing.
+#
+# Upstream's Dockerfile says `pip install bayspec` with no version. bayspec
+# 0.4.0 was published between the day the reference image was built and the day
+# this one was, and it calls `arviz.waic`, which does not exist in arviz 1.3.0 —
+# the arviz that pip resolves today. The result was a worker that downloaded
+# data, extracted three detectors' spectra and ran MultiNest to completion, then
+# died in bayspec's post-fit information-criterion step with
+# `AttributeError: module 'arviz' has no attribute 'waic'`.
+#
+# The lesson worth keeping: pinning the PIPELINE at a git SHA (see
+# GRB_PIPELINE_SHA) makes the pipeline's own code reproducible and does nothing
+# whatsoever for its dependencies. An unpinned transitive stack means the image
+# you get depends on the day you build it, and a fit that worked yesterday can
+# fail today with nothing in this repository having changed.
+#
+# 0.3.14 is the version this integration was verified end to end against.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install bayspec==0.3.14
+
+# ── Scientific stack — UPSTREAM'S LIST, VERBATIM. DO NOT TRIM. ───────────────
+#
+# This is copied unchanged from the fermi-gbm-analysis Dockerfile at the pinned
+# SHA, and the ordering/content is deliberate: it is the combination the
+# pipeline is actually tested against.
+#
+# Two attempts to trim it "obviously unnecessary" packages both shipped a
+# worker that failed real jobs:
+#
+#   cartopy           — heapy.geos.geometry imports it at MODULE level, so it
+#                       is needed as early as detector auto-selection
+#                       (resolve_detectors -> suggest_detectors -> gbmGeometry),
+#                       not merely for the skymap it exists to draw. Without it
+#                       every job died at runner.load().
+#   ipython_genutils  — pulled in on heapy's SPECTRUM EXTRACTION path. Without
+#                       it every detector failed with ModuleNotFoundError, no
+#                       .src files were written, and the fit then died with
+#                       "<2 detectors for tint fit (0)".
+#
+# The second one is the instructive failure: it is invisible to an import check
+# AND invisible to a re-run over cached fit products, because extraction is
+# skipped when the fingerprinted artifacts already exist. Only a cold fit
+# reaches it. The transitive import graph of heapy/bayspec is not something to
+# guess at from package names — if this list needs to shrink, shrink it by
+# running a cold fit per removal, not by reading it.
+#
+# RESIDUAL RISK, stated rather than hidden: this line is still unpinned, exactly
+# like upstream's. bayspec above had to be pinned after an unpinned release
+# broke the fit overnight, and the same can happen here — arviz in particular,
+# since bayspec calls into it. If a future rebuild fails in a way this
+# repository cannot explain, diff `pip list` against a known-good image before
+# assuming the fault is local.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install arviz pandas scipy matplotlib tables astropy cartopy bilby \
+        ipython_genutils pytest dynesty corner h5py
+
+# ── MultiNest + PyMultiNest (bayspec's nested sampler) ──────────────────────
+RUN git clone https://github.com/JohannesBuchner/MultiNest.git && \
+    cd MultiNest && \
+    mkdir -p build && cd build && \
+    cmake .. && \
+    make && \
+    cp ../lib/libmultinest.so /usr/local/lib/ && \
+    echo '/usr/local/lib' > /etc/ld.so.conf.d/multinest.conf && \
+    ldconfig && \
+    cd /opt && rm -rf /opt/MultiNest
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install pymultinest
+
+# ── The pipeline itself, pinned ──────────────────────────────────────────────
+RUN git clone ${GRB_PIPELINE_REPO} /opt/fermi-gbm-analysis && \
+    cd /opt/fermi-gbm-analysis && \
+    git checkout --quiet ${GRB_PIPELINE_SHA} && \
+    rm -rf .git
+
+# ── Worker dependencies and source ───────────────────────────────────────────
+COPY backend/grb_fit_worker/requirements.txt /tmp/worker-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /tmp/worker-requirements.txt
+
+WORKDIR /app
+COPY backend/grb_fit_worker ./grb_fit_worker
+
+# ── Runtime environment ──────────────────────────────────────────────────────
+# PYTHONPATH carries the pipeline: `import pipeline.*` and `grb_config` resolve
+# out of the pinned checkout, and /app makes `grb_fit_worker` importable.
+ENV PYTHONPATH=/app:/opt/fermi-gbm-analysis
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV MPLBACKEND=Agg
+# Single concurrency is the design; let BLAS honour it rather than fanning out
+# across every core inside a job that is already the unit of parallelism.
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV NUMEXPR_NUM_THREADS=1
+# Python block-buffers stdout when it is a pipe (which it is under
+# `docker compose logs`), which makes a worker mid-fit look hung for minutes.
+ENV PYTHONUNBUFFERED=1
+ENV DATA_BASE=/workspace/data
+ENV GRB_PIPELINE_VERSION=${GRB_PIPELINE_SHA}
+
+CMD ["python", "-m", "grb_fit_worker"]
