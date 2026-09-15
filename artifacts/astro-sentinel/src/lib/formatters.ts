@@ -99,3 +99,24 @@ export function formatLatency(
   if (us < 3600 * 1_000_000) return `${(us / (60 * 1_000_000)).toFixed(1)} min`;
   return `${(us / (3600 * 1_000_000)).toFixed(1)} h`;
 }
+
+/**
+ * Human-readable label for a `core.events.event_type` value.
+ *
+ * Takes a plain string: the generated AstroEvent enum lists only GRB | GW |
+ * FRB, but the table also holds EP, NU and OTHER. An unrecognised type says
+ * so — it is never given another type's name, which is what BasicInfo's Type
+ * row and DerivedParameters' Classification row both used to do by falling
+ * through to "Fast radio burst".
+ */
+export function typeLabel(eventType: string): string {
+  switch (eventType) {
+    case "GRB":   return "Gamma-ray burst";
+    case "GW":    return "Gravitational wave";
+    case "FRB":   return "Fast radio burst";
+    case "EP":    return "X-ray transient";
+    case "NU":    return "Neutrino candidate";
+    case "OTHER": return "Unclassified";
+    default:      return `Unclassified (${eventType})`;
+  }
+}

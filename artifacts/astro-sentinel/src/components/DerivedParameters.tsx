@@ -1,4 +1,5 @@
 import type { AstroEvent } from "@workspace/api-client-react";
+import { typeLabel } from "@/lib/formatters";
 
 interface Props {
   event: AstroEvent;
@@ -13,11 +14,11 @@ const SHORT_LONG_T90_BOUNDARY_S = 2;
 
 function getClassification(event: AstroEvent): string {
   // The generated enum lists only GRB | GW | FRB, but core.events also holds
-  // EP, NU and OTHER. Switch on the runtime string so those are reachable.
+  // EP, NU and OTHER, so switch on the runtime string.
   //
-  // This previously returned "Fast radio burst" for every type that was not
-  // GRB or GW, so neutrino, Einstein Probe and unclassified events were all
-  // labelled as a specific wrong type. Unrecognised types now say so.
+  // GRB and GW have a finer class than their type. Every other type has none,
+  // so its classification IS its type label — taken from the shared helper so
+  // this row and BasicInfo's Type row cannot drift apart.
   const type: string = event.eventType;
   switch (type) {
     case "GRB": {
@@ -31,12 +32,8 @@ function getClassification(event: AstroEvent): string {
       }
       return t90 < SHORT_LONG_T90_BOUNDARY_S ? "Short GRB" : "Long GRB";
     }
-    case "GW":    return "Compact binary";
-    case "FRB":   return "Fast radio burst";
-    case "EP":    return "X-ray transient";
-    case "NU":    return "Neutrino candidate";
-    case "OTHER": return "Unclassified";
-    default:      return `Unclassified (${type})`;
+    case "GW": return "Compact binary";
+    default:   return typeLabel(type);
   }
 }
 
