@@ -120,6 +120,33 @@ async def revision_delta(payload: dict):
 
     return {"ok": True, "report": report.to_dict()}
 
+
+# NOTE: a plain `def`, not `async def`, unlike every other handler in this file.
+#
+# The OpenAI provider is blocking end to end — a synchronous HTTP client plus
+# time.sleep() between retries — and its worst case is (retries + 1) attempts
+# x timeout, per model. On the package's defaults that is 366 s. Declared
+# `async def`, it would block the event loop for minutes and stall the GCN
+# Kafka listener and every WebSocket client with it. FastAPI runs a sync
+# handler in a threadpool instead, which is what this needs.
+#
+# The caller is expected to be a background worker, never a request the user
+# is waiting on.
+@app.post("/api/science/openai-circular-extraction")
+def openai_circular_extraction(payload: dict):
+    from app.gcn.openai_extraction import extract_circular
+
+    result = extract_circular(
+        subject=payload.get("subject") or "",
+        body=payload.get("body") or "",
+        circular_number=payload.get("circular_number") or "",
+        regexp_hints=payload.get("regexp_hints"),
+    )
+    # `ok` reports whether the endpoint functioned, matching the other science
+    # endpoints. Whether an extraction actually happened is `available`, which
+    # is a separate question and is never conflated with it.
+    return {"ok": True, **result}
+
 @app.get("/api/events")
 def get_events(limit: int = 100):
     events_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "historical_events.json")

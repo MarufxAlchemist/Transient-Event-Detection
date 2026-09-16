@@ -10,7 +10,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { parseCircular, circularContentHash, CircularValidationError } from "./payload.js";
+import {
+  parseCircular,
+  circularContentHash,
+  normalizeRegexpHints,
+  shouldSkipExtraction,
+  CircularValidationError,
+} from "./payload.js";
 
 /** A real archive record (GCN Circular 35176), body abbreviated. */
 const VALID = {
@@ -131,5 +137,137 @@ describe("content hash", () => {
     // Without a separator, ("ab","c") and ("a","bc") would hash identically
     // and one circular would be served another's extraction.
     expect(circularContentHash("ab", "c")).not.toBe(circularContentHash("a", "bc"));
+  });
+});
+
+describe("regexp hints (Priority #5 — astro-colibri-circular-parser)", () => {
+  it("passes through a plain object from the Python consumer unchanged", () => {
+    const hints = { likely_redshift_report: true, matched_terms: ["redshift"] };
+    expect(normalizeRegexpHints(hints)).toEqual(hints);
+  });
+
+  // The Python side sends null whenever the parser package is unavailable or
+  // the archive backfill (which never runs the Python step) supplies nothing.
+  // Both must degrade to null, never throw — a hints problem must never be
+  // why an otherwise-good circular gets rejected.
+  // Labelled rather than raw values: `%s` renders [] as "undefined", so the
+  // empty-array case was indistinguishable from the undefined case in the
+  // reporter — two tests with the same name, one of them silently unverifiable.
+  it.each([
+    { label: "null", raw: null },
+    { label: "undefined", raw: undefined },
+    { label: "a string", raw: "a string" },
+    { label: "a number", raw: 42 },
+    { label: "an empty array", raw: [] },
+    { label: "an array of entries", raw: [{ a: 1 }] },
+    { label: "a boolean", raw: true },
+  ])("degrades $label to null instead of throwing", ({ raw }) => {
+    expect(normalizeRegexpHints(raw)).toBeNull();
+  });
+});
+
+describe("extraction cost prefilter (shouldSkipExtraction)", () => {
+  /** Every content flag false, no contacts — the skippable shape. */
+  const INERT = {
+    likely_optical_followup: false,
+    likely_redshift_report: false,
+    likely_retraction: false,
+    likely_correction: false,
+    likely_upper_limit: false,
+    likely_high_energy_detection: false,
+    local_likely_xray_radio_followup: false,
+    contact_email_count: 0,
+  };
+
+  it("skips a routine GRB circular whose hints show no scientific content", () => {
+    expect(shouldSkipExtraction("GRB240218A", INERT)).toBe(true);
+  });
+
+  // SAFETY PROPERTY 1. Measured over the real archive, a flags-only rule
+  // skipped 99.2% of GW, 100% of FRB and 99.4% of neutrino circulars —
+  // including the LVK compact-binary-merger identification circulars that
+  // carry the FAR, the BNS/BBH/NSBH probabilities and the credible area. The
+  // hint vocabulary simply does not cover that language, so the event family
+  // gates the filter, not the flags.
+  describe("never skips a non-GRB circular, whatever the flags say", () => {
+    it.each([
+      { label: "a GW superevent id", id: "S240705AT" },
+      { label: "a GW event id", id: "GW170817" },
+      { label: "an IceCube neutrino id", id: "ICECUBE-251225A" },
+      { label: "an FRB id", id: "FRB20240114A" },
+      { label: "an Einstein Probe id", id: "EP250215A" },
+      { label: "an SGR id", id: "SGR1935+2154" },
+      { label: "no identifier at all", id: null },
+      { label: "an empty identifier", id: "" },
+    ])("$label", ({ id }) => {
+      expect(shouldSkipExtraction(id, INERT)).toBe(false);
+    });
+  });
+
+  // SAFETY PROPERTY 2. null means "not computed" — the parser was
+  // unavailable, or the row came through the archive backfill, which never
+  // runs the Python hints step. It does NOT mean "the regex found nothing".
+  // All 44,777 rows predating migration 0022 have null hints.
+  describe("never skips when the hint set is absent or unusable", () => {
+    it.each([
+      { label: "null hints", raw: null },
+      { label: "undefined hints", raw: undefined },
+      { label: "a string", raw: "hints" },
+      { label: "an array", raw: [] },
+    ])("$label", ({ raw }) => {
+      expect(shouldSkipExtraction("GRB240218A", raw)).toBe(false);
+    });
+  });
+
+  describe("never skips when any single content flag fires", () => {
+    it.each([
+      "likely_optical_followup",
+      "likely_redshift_report",
+      "likely_retraction",
+      "likely_correction",
+      "likely_upper_limit",
+      "likely_high_energy_detection",
+      "local_likely_xray_radio_followup",
+    ])("%s", (flag) => {
+      expect(shouldSkipExtraction("GRB240218A", { ...INERT, [flag]: true })).toBe(false);
+    });
+  });
+
+  it("never skips when the circular names contacts", () => {
+    expect(shouldSkipExtraction("GRB240218A", { ...INERT, contact_email_count: 3 })).toBe(false);
+  });
+
+  // REGRESSION — GCN Circulars 22372 and 22374.
+  //
+  // Chandra X-ray monitoring of GW170817/GRB170817A, the first GW/GRB
+  // coincidence. Their identifier is GRB170817A (GCN's own eventId reads
+  // "GRB 170817A"), so they ARE in scope for skipping, and they set none of
+  // the six upstream flags: X-ray monitoring language is not optical, quotes
+  // no redshift, retracts nothing and is not an upper limit. Before the
+  // local_likely_xray_radio_followup flag existed, both were skipped.
+  //
+  // If this test fails, the X-ray/radio guard has been dropped and the
+  // archive is quietly losing X-ray follow-up of its most important event.
+  describe("regression: the GW170817/GRB170817A Chandra circulars are not skipped", () => {
+    it.each([
+      { circularId: 22372, subject: "GW170817/GRB170817A: Preliminary results of Chandra monitoring" },
+      { circularId: 22374, subject: "GW170817/GRB170817A: Updated results from the full Chandra dataset" },
+    ])("circular $circularId", ({ subject }) => {
+      expect(subject).toMatch(/Chandra/);
+      // The Python hints step sets this flag for exactly this language.
+      const hints = { ...INERT, local_likely_xray_radio_followup: true };
+      expect(shouldSkipExtraction("GRB170817A", hints)).toBe(false);
+    });
+  });
+
+  it("matches the GRB prefix case-insensitively", () => {
+    expect(shouldSkipExtraction("grb240218a", INERT)).toBe(true);
+  });
+
+  // A flag that is present but not literally `true` is not a licence to skip:
+  // only an explicit false-or-absent set qualifies, and anything truthy-but-
+  // odd (a string, a number) must be treated as content rather than ignored.
+  it("treats a non-boolean truthy flag as content, not as absent", () => {
+    expect(shouldSkipExtraction("GRB240218A", { ...INERT, likely_upper_limit: "yes" })).toBe(false);
   });
 });

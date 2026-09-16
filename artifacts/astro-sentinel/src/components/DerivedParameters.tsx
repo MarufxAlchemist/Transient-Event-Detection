@@ -1,15 +1,40 @@
 import type { AstroEvent } from "@workspace/api-client-react";
+import { typeLabel } from "@/lib/formatters";
 
 interface Props {
   event: AstroEvent;
 }
 
-function getClassification(event: AstroEvent) {
-  if (event.eventType === "GRB") {
-    return event.fluence && event.fluence > 1e-5 ? "Long GRB" : "Short GRB";
+/**
+ * Short/long GRB boundary. Kouveliotou et al. 1993, ApJ 413, L101: the BATSE
+ * T90 distribution is bimodal with its minimum near 2 s, so T90 < 2 s is short
+ * and T90 >= 2 s is long.
+ */
+const SHORT_LONG_T90_BOUNDARY_S = 2;
+
+function getClassification(event: AstroEvent): string {
+  // The generated enum lists only GRB | GW | FRB, but core.events also holds
+  // EP, NU and OTHER, so switch on the runtime string.
+  //
+  // GRB and GW have a finer class than their type. Every other type has none,
+  // so its classification IS its type label — taken from the shared helper so
+  // this row and BasicInfo's Type row cannot drift apart.
+  const type: string = event.eventType;
+  switch (type) {
+    case "GRB": {
+      // This previously split on fluence > 1e-5, which is not the long/short
+      // criterion — and a missing fluence fell through to "Short GRB". The
+      // class is defined by T90; without a measured T90 it is UNKNOWN, not
+      // guessed from another quantity. A T90 <= 0 is not a measured duration.
+      const t90 = event.t90;
+      if (t90 == null || !Number.isFinite(t90) || t90 <= 0) {
+        return "GRB — long/short unknown (no T90)";
+      }
+      return t90 < SHORT_LONG_T90_BOUNDARY_S ? "Short GRB" : "Long GRB";
+    }
+    case "GW": return "Compact binary";
+    default:   return typeLabel(type);
   }
-  if (event.eventType === "GW") return "Compact binary";
-  return "Fast radio burst";
 }
 
 function Item({ label, value }: { label: string; value: string }) {

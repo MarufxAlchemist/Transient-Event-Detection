@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS ltree;
+--> statement-breakpoint
 CREATE SCHEMA "alerts";
 --> statement-breakpoint
 CREATE SCHEMA "audit";
@@ -107,9 +109,9 @@ CREATE TABLE "catalog"."sky_regions" (
 CREATE TABLE "core"."event_annotations" (
 	"id" bigserial PRIMARY KEY NOT NULL,
 	"lab_id" uuid NOT NULL,
-	"event_id" bigserial NOT NULL,
+	"event_id" bigint NOT NULL,
 	"user_id" uuid NOT NULL,
-	"parent_id" bigserial,
+	"parent_id" bigint,
 	"content" text NOT NULL,
 	"tags" text[] DEFAULT '{}' NOT NULL,
 	"is_pinned" boolean DEFAULT false NOT NULL,
@@ -206,7 +208,7 @@ CREATE TABLE "core"."events" (
 	"detection_time" timestamp with time zone NOT NULL,
 	"ra" double precision NOT NULL,
 	"dec" double precision NOT NULL,
-	"sky_position" geography(POINT, 4326),
+	"sky_position" text,
 	"error_radius" double precision NOT NULL,
 	"snr" double precision NOT NULL,
 	"far" double precision NOT NULL,

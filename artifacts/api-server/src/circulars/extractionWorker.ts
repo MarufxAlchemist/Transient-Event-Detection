@@ -259,6 +259,12 @@ export async function processDueExtractions(
        WHERE id IN (
          SELECT id FROM core.circular_extractions
           WHERE status = 'pending'
+            -- Scoped to this extractor (migration 0024). Without it this
+            -- query would also claim astro-colibri-openai rows, whose worst
+            -- case is minutes, and drain them in the same sequential loop as
+            -- Gemini's 45 s jobs — the coupling the separate worker exists to
+            -- avoid.
+            AND extractor = 'gemini'
             AND (next_attempt_at IS NULL OR next_attempt_at <= ${now})
           ORDER BY created_at
           FOR UPDATE SKIP LOCKED
@@ -319,6 +325,10 @@ export async function reapStuckJobs(staleAfterMs = 10 * 60_000, now = new Date()
       .where(
         and(
           eq(circularExtractions.status, "processing"),
+          // Scoped for the same reason as the claim query: an unscoped reaper
+          // would return the OTHER extractor's genuinely in-flight rows to
+          // the queue, and its jobs run for minutes.
+          eq(circularExtractions.extractor, "gemini"),
           sql`${circularExtractions.updatedAt} < ${cutoff}`,
         ),
       )

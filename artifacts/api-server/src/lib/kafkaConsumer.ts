@@ -51,6 +51,7 @@ import { recordReceived, recordAccepted, recordRejected } from "./filterReport";
 import { logger } from "./logger";
 import { dispatchForEvent } from "../notifications/notificationService";
 import { recordRevision } from "./revisionRecorder";
+import { enqueueGrbFitJob } from "./grbFitEnqueue";
 import { handleCircularFrame } from "../circulars/bridge";
 import { reassociateOrphans } from "../circulars/ingestion";
 import { seedAliasesForEvent } from "../circulars/association";
@@ -507,6 +508,28 @@ async function _handleAlert(envelope: Record<string, unknown>): Promise<void> {
     // notification logic. Errors in the notification layer never affect ingestion.
     void dispatchForEvent(broadcastPayload, isRevision).catch((err) =>
       logger.error({ err }, "[notifications] dispatchForEvent threw unexpectedly"),
+    );
+
+    // ── GRB spectral re-fit queue (fire-and-forget, isolated from ingestion) ─
+    // Decided from the row just upserted, and deliberately placed AFTER the
+    // broadcast rather than between the upsert and it: a fit is minutes of work
+    // whose queue row nothing here waits on, so it must not sit on the path an
+    // alert takes to a dashboard. Same contract as the notification dispatch
+    // above — all decisions and errors are contained in the module.
+    //
+    // Enqueues only when the fit could actually run, which currently means
+    // never: nothing in this database populates t90. See grbFitEnqueue.ts.
+    void enqueueGrbFitJob({
+      id:            upserted.id,
+      eventId:       upserted.eventId,
+      eventType:     upserted.eventType,
+      ra:            upserted.ra,
+      dec:           upserted.dec,
+      t90:           upserted.t90,
+      isRetraction:  upserted.isRetraction,
+      revisionCount: Number(upserted.revisionCount),
+    }).catch((err) =>
+      logger.error({ err }, "[grb-fit] enqueueGrbFitJob threw unexpectedly"),
     );
 
     // ── Attach circulars that were waiting for this event ──────────────────

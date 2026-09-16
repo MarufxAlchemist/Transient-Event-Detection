@@ -142,6 +142,22 @@ export const eventCirculars = coreSchema.table(
     /** The complete original GCN payload, so nothing unmodelled is lost. */
     rawPayload: jsonb("raw_payload").notNull().$type<Record<string, unknown>>(),
 
+    /**
+     * Deterministic, offline regex content triage from
+     * astro-colibri-circular-parser's `build_regexp_hints` (Priority #5) —
+     * booleans like `likely_redshift_report`, `matched_terms`,
+     * `context_snippets`. Computed once in the Python GCN consumer alongside
+     * the untouched payload above, never inside it.
+     *
+     * This is NOT an AI extraction and does not belong in
+     * core.circular_extractions: it is plain regex over text already in
+     * hand, with no model call and no event association, so a null value
+     * here means "not computed" (parser unavailable, or the archive backfill
+     * path, which does not run the Python hints step) — never "nothing
+     * matched" for a circular that could not be checked.
+     */
+    regexpHints: jsonb("regexp_hints").$type<Record<string, unknown> | null>(),
+
     /** SHA-256 over subject + body. Drives the extraction cache. */
     contentHash: text("content_hash").notNull(),
 
@@ -208,9 +224,45 @@ export const CIRCULAR_EXTRACTION_STATUSES = [
   "processing",
   "completed",
   "failed",
+  /**
+   * A deliberate decision NOT to send this circular to the AI provider — the
+   * CIRCULAR_EXTRACTION_SKIP_NON_SCIENTIFIC cost prefilter (migration 0023).
+   *
+   * No model call was made. This is not `completed` (nothing was extracted,
+   * and rendering it as a finding would assert the AI read the circular and
+   * found nothing), not `failed` (nothing went wrong), and not an absent row
+   * (indistinguishable from "not yet queued"). It carries no payload and is
+   * invisible to the worker's due-queue, whose index is partial on
+   * ('pending', 'processing').
+   */
+  "skipped",
 ] as const;
 
 export type CircularExtractionStatus = (typeof CIRCULAR_EXTRACTION_STATUSES)[number];
+
+/**
+ * Which extractor owns a row — and therefore which worker claims it.
+ *
+ * These are two INDEPENDENT extractions of the same circular, not a primary
+ * and a fallback. They coexist because content_hash includes the model name,
+ * so one circular yields a distinct row per extractor.
+ *
+ * They do NOT share a queue. extractionWorker.ts drains its claimed batch
+ * sequentially, and the OpenAI provider's worst case (retries+1 attempts x
+ * timeout, per model) is minutes against Gemini's 45 s — one slow OpenAI job
+ * would stall every Gemini job behind it. Each extractor gets its own worker
+ * and its own claim query filtered on this column. Constrained in the
+ * database by chk_extraction_extractor (migration 0024) so a typo cannot
+ * silently create a third, unclaimed queue.
+ */
+export const CIRCULAR_EXTRACTORS = [
+  /** services/ai/circular-extraction-agent.ts — the original Gemini path. */
+  "gemini",
+  /** astro-colibri-circular-parser's OpenAI photometry extraction (Priority #8). */
+  "astro-colibri-openai",
+] as const;
+
+export type CircularExtractor = (typeof CIRCULAR_EXTRACTORS)[number];
 
 /**
  * Why an attempt failed, and therefore whether retrying can help.
@@ -247,6 +299,17 @@ export const circularExtractions = coreSchema.table(
     /** Which model produced this, so a claim can be traced to its author. */
     provider: text("provider"),
     modelName: text("model_name"),
+
+    /**
+     * Which extractor owns this row (migration 0024). The DEFAULT exists only
+     * to backfill rows that predate the column — every writer sets it
+     * explicitly, because a default that happens to be right today is a
+     * landmine the day a third extractor is added.
+     */
+    extractor: text("extractor")
+      .notNull()
+      .default("gemini")
+      .$type<CircularExtractor>(),
     schemaVersion: integer("schema_version").notNull(),
     promptVersion: integer("prompt_version").notNull(),
     /** SHA-256(subject+body+schemaVersion+promptVersion+model). */

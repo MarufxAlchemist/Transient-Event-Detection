@@ -106,6 +106,7 @@ export {
   circularExtractionsRelations,
   CIRCULAR_ASSOCIATION_METHODS,
   CIRCULAR_EXTRACTION_STATUSES,
+  CIRCULAR_EXTRACTORS,
   CIRCULAR_EXTRACTION_FAILURE_KINDS,
 } from "./circulars.js";
 export type {
@@ -117,8 +118,40 @@ export type {
   InsertCircularExtraction,
   CircularAssociationMethod,
   CircularExtractionStatus,
+  CircularExtractor,
   CircularExtractionFailureKind,
 } from "./circulars.js";
+
+// ─── Core: GRB spectral fits (migration 0025) ────────────────────────────────
+export {
+  grbFitJobs,
+  grbSpectralFits,
+  grbValidationFlags,
+  grbLiteratureRefs,
+  grbFitJobsRelations,
+  grbSpectralFitsRelations,
+  grbValidationFlagsRelations,
+  GRB_FIT_JOB_STATUSES,
+  GRB_DETECTOR_CFGS,
+  GRB_FIT_MODES,
+  GRB_BAND_FAMILY_MODELS,
+  GRB_VALIDATION_SEVERITIES,
+} from "./grbFits.js";
+export type {
+  GrbFitJob,
+  InsertGrbFitJob,
+  GrbSpectralFit,
+  InsertGrbSpectralFit,
+  GrbValidationFlag,
+  InsertGrbValidationFlag,
+  GrbLiteratureRef,
+  InsertGrbLiteratureRef,
+  GrbFitJobStatus,
+  GrbDetectorCfg,
+  GrbFitMode,
+  GrbBandFamilyModel,
+  GrbValidationSeverity,
+} from "./grbFits.js";
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────
 export {

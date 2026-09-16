@@ -283,10 +283,18 @@ export type InsertEventFollowupRequest = typeof eventFollowupRequests.$inferInse
 export const eventAnnotations = coreSchema.table("event_annotations", {
   id: bigserial("id", { mode: "bigint" }).primaryKey(),
   labId: uuid("lab_id").notNull().references(() => labs.id),
-  eventId: bigserial("event_id", { mode: "bigint" }).notNull()
+  // FOREIGN KEYS, NOT SERIALS. These were `bigserial`, which is
+  // integer + sequence + DEFAULT nextval() — a shape that only makes sense
+  // for a table's own identity column. On a foreign key it silently invents
+  // a reference: POST /events/:id/notes omits parentId, so every note was
+  // assigned a parent from the sequence, and the notes list query
+  // (isNull(parentId)) then filtered the note it had just created out of
+  // its own response. Verified against the live database, 2026-09-07.
+  eventId: bigint("event_id", { mode: "bigint" }).notNull()
     .references(() => events.id),
   userId: uuid("user_id").notNull().references(() => users.id),
-  parentId: bigserial("parent_id", { mode: "bigint" })
+  /** NULL = a root annotation. Nullable is the whole point of the column. */
+  parentId: bigint("parent_id", { mode: "bigint" })
     .references((): any => eventAnnotations.id),
   content: text("content").notNull(),
   tags: text("tags").array().notNull().default([]),

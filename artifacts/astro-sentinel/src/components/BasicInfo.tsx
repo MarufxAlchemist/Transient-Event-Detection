@@ -1,5 +1,5 @@
 import type { AstroEvent } from "@workspace/api-client-react";
-import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp, formatDerived } from "@/lib/formatters";
+import { formatMicrosecondDate, formatLatency, formatMeasured, formatExp, formatDerived, typeLabel } from "@/lib/formatters";
 
 interface Props { event: AstroEvent; }
 
@@ -47,6 +47,13 @@ export function buildExternalLinks(event: AstroEvent) {
       // TNS cone search — 1 arcmin radius around the event position
       href: `https://www.wis-tns.org/search?ra=${ra}&decl=${dec}&radius=1&coords_unit=arcsec`,
     },
+    {
+      name: "Astro-COLIBRI",
+      desc: "Multi-messenger follow-up platform",
+      icon: "🌐",
+      // Astro-COLIBRI source page, keyed by the human-readable event ID
+      href: `https://astro-colibri.science/sources/${encodeURIComponent(event.eventId)}`,
+    },
   ];
 }
 
@@ -57,7 +64,7 @@ export function BasicInfo({ event }: Props) {
     <div className="flex flex-col">
       <div className="p-3 space-y-0.5">
         <Row label="Event ID" value={event.eventId} />
-        <Row label="Type" value={event.eventType === "GRB" ? "Gamma-ray burst" : event.eventType === "GW" ? "Gravitational wave" : "Fast radio burst"} />
+        <Row label="Type" value={typeLabel(event.eventType)} />
         <Row label="Date [UTC]" value={formatMicrosecondDate(event.detectionTime).slice(0, 19).replace("T", " ")} />
         <Row label="Observatory" value={event.observatory} />
         <Row label="Instrument" value={`${event.observatory}/${event.eventType}`} />
@@ -78,7 +85,7 @@ export function BasicInfo({ event }: Props) {
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">External information:</span>
           <div className="flex gap-1">
-            {[0, 1, 2, 3].map(i => (
+            {externalLinks.map((_, i) => (
               <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === 0 ? "bg-primary" : "bg-border"}`} />
             ))}
           </div>

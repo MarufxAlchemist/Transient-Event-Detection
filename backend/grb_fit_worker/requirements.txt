@@ -1,0 +1,9 @@
+# Everything the FIT needs (heapy, bayspec, MultiNest, pymultinest, astropy,
+# pandas, h5py, tables) is installed by the fermi-gbm-analysis image layers
+# mirrored in Dockerfile.grb-fit-worker. Only the database client is ours.
+#
+# psycopg2, not asyncpg: it is the client the rest of this repo's Python
+# already uses (backend/scripts/*.py), and the worker is single-concurrency
+# around a blocking, CPU-bound sampler, so an async driver would add a
+# dependency and buy nothing.
+psycopg2-binary>=2.9,<3
