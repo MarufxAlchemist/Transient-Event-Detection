@@ -259,3 +259,84 @@ will return. The mirror solves reproducibility; it does not answer those.
   form; if the error names `<2 detectors`, choose `nai_bgo`.
 - **Local host ports** (15173 / 18000 / 55432) come from a gitignored
   `docker-compose.override.yml`, not the repository.
+
+## 7. Runtime pipeline sync (`cloud/grb-pipeline-sync`)
+
+### 7.1 Why
+
+Picking up a new `fermi-gbm-analysis` commit meant rebuilding
+`Dockerfile.grb-fit-worker` — a ~13-minute image build touching heapy, bayspec
+and MultiNest layers nothing about the pipeline change touched. This lets the
+worker pull a new commit into its own data volume and switch to it between fit
+jobs, with rollback, while keeping the same correctness guarantees a pinned
+image gave for free.
+
+### 7.2 Why the worker does this, not the API
+
+The API server has neither git, the scientific dependency stack, nor the data
+volume. The worker has all three, and it is the only process that ever touches
+the pipeline checkout. So the API only ever inserts a `pending` row into
+`core.grb_pipeline_syncs`; the worker claims it between fit jobs (its poll loop
+is single-threaded, so a sync is only attempted in an iteration where no fit
+job was claimed) and writes back the outcome.
+
+### 7.3 Release store layout
+
+```
+$GRB_PIPELINE_RELEASES_DIR/            (default /workspace/pipeline-releases)
+    releases/<full-sha>/               one checkout per synced commit
+    current -> releases/<full-sha>     swapped with os.replace(), atomic
+    .activations.json                  ordered log of every activated sha
+    .baked_pins.json                   the dependency-pin snapshot this image was built with
+```
+
+On first run, with no `current` symlink yet, the store bootstraps from the
+image's own baked-in checkout at `/opt/fermi-gbm-analysis`, so a worker that
+has never synced still has a well-formed release store.
+
+### 7.4 Sync flow — fetch, verify, activate; all or nothing
+
+1. Fetch `GRB_PIPELINE_REF`, resolve the full SHA.
+2. Already have a release at that SHA — no-op, `up_to_date`.
+3. **Dependency-pin gate**: diff the fetched release's pin manifest
+   (`requirements.txt` / `environment.yml` / `pyproject.toml`) against this
+   image's baked snapshot. Any change — added, removed or changed pin — is
+   refused as `needs_image_rebuild`, naming exactly what changed. No amount of
+   worker-side cleverness substitutes for a rebuild when the new commit needs
+   a dependency this image does not have.
+4. **Contract check**: run `scripts/check_integration.py --json` as a
+   subprocess from inside the fetched checkout — never imported into the
+   worker's own interpreter. Missing the script refuses the sync
+   (`contract_check_missing`) unless `GRB_PIPELINE_ALLOW_NO_CONTRACT=1`. A
+   nonzero exit refuses it as `contract_check_failed`.
+5. Only once both checks pass: atomic swap of `current`, then prune old
+   releases beyond `GRB_PIPELINE_KEEP` (the active and previous release are
+   always kept).
+
+Any failure before step 5 leaves `current` and the release store exactly as
+found.
+
+### 7.5 Provenance
+
+Each claimed fit job is stamped with `core.grb_fit_jobs.pipeline_sha`, the
+release active at claim time (read fresh, not cached) — carried through to
+`core.grb_spectral_fits.pipeline_version` on the stored fit. A sync that lands
+between two jobs takes effect on the very next claim with no worker restart;
+cached `pipeline.*` submodules are evicted before each job so a changed
+release is actually re-imported.
+
+### 7.6 Runbook
+
+- Trigger a sync: `POST /api/grb-pipeline/sync` (auth required). Check
+  progress: `GET /api/grb-pipeline/status` (public read).
+- Roll back to the previous release: `POST /api/grb-pipeline/rollback` with an
+  empty body. Roll back to a specific known release: `{"sha": "<full 40-char
+  sha>"}` — the API rejects a SHA this worker has not already held.
+- `needs_image_rebuild` means exactly that: rebuild
+  `Dockerfile.grb-fit-worker` with the new pin set before retrying the sync.
+- The git token (`GRB_PIPELINE_GIT_TOKEN`) is read fresh from the environment
+  for the one authenticated clone, never logged, never persisted to the
+  release store, and stripped from the subprocess environment of both the
+  clone and the contract check.
+- Env vars and the `grb_pipeline_releases` volume are wired in
+  `docker-compose.yml`; see `.env.example` for the full list.
