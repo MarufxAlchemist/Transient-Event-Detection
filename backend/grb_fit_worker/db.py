@@ -54,9 +54,10 @@ def connect():
 
 _CLAIM_SQL = """
 UPDATE core.grb_fit_jobs AS j
-   SET status     = 'running',
-       started_at = now(),
-       attempts   = j.attempts + 1
+   SET status      = 'running',
+       started_at  = now(),
+       attempts    = j.attempts + 1,
+       pipeline_sha = %(pipeline_sha)s
  WHERE j.id = (
        SELECT id
          FROM core.grb_fit_jobs
@@ -66,7 +67,7 @@ UPDATE core.grb_fit_jobs AS j
         LIMIT 1
        )
 RETURNING j.id, j.event_pk, j.event_id, j.grb_name, j.model,
-          j.detector_cfg, j.nlive, j.t1, j.t2, j.attempts
+          j.detector_cfg, j.nlive, j.t1, j.t2, j.attempts, j.pipeline_sha
 """
 
 _EVENT_SQL = """
@@ -82,10 +83,10 @@ SELECT e.id,
 """
 
 
-def claim_job(conn) -> dict | None:
-    """Claim one pending job and mark it running. Commits."""
+def claim_job(conn, pipeline_sha: str | None) -> dict | None:
+    """Claim one pending job, mark it running, and stamp the active pipeline sha."""
     with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-        cur.execute(_CLAIM_SQL)
+        cur.execute(_CLAIM_SQL, {"pipeline_sha": pipeline_sha})
         row = cur.fetchone()
         conn.commit()
         return dict(row) if row else None
@@ -251,3 +252,57 @@ def record_failure(conn, job_id: int, message: str) -> None:
     except psycopg2.Error:
         conn.rollback()
         raise
+
+
+# ── Pipeline sync requests ───────────────────────────────────────────────────
+#
+# Same SKIP LOCKED claim pattern as _CLAIM_SQL, against core.grb_pipeline_syncs
+# instead. The API only ever inserts a 'pending' row; this worker is the only
+# process that claims and resolves one, between fit jobs (see __main__.py).
+
+_CLAIM_SYNC_SQL = """
+UPDATE core.grb_pipeline_syncs AS s
+   SET status = 'running'
+ WHERE s.id = (
+       SELECT id
+         FROM core.grb_pipeline_syncs
+        WHERE status = 'pending'
+        ORDER BY requested_at, id
+          FOR UPDATE SKIP LOCKED
+        LIMIT 1
+       )
+RETURNING s.id, s.action, s.to_sha
+"""
+
+
+def claim_pipeline_sync(conn) -> dict | None:
+    """Claim one pending pipeline sync/rollback request. Commits."""
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(_CLAIM_SYNC_SQL)
+        row = cur.fetchone()
+        conn.commit()
+        return dict(row) if row else None
+
+
+def finish_pipeline_sync(
+    conn,
+    request_id: int,
+    *,
+    status: str,
+    from_sha: str | None,
+    to_sha: str | None,
+    message: str | None,
+) -> None:
+    """Record the outcome of a claimed pipeline sync/rollback request."""
+    cleaned = (message or "").replace("\x00", "")[:4000]
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE core.grb_pipeline_syncs
+               SET status = %s, from_sha = %s, to_sha = %s,
+                   message = %s, finished_at = now()
+             WHERE id = %s
+            """,
+            (status, from_sha, to_sha, cleaned, request_id),
+        )
+    conn.commit()
