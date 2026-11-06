@@ -5,9 +5,9 @@ interface Props { event: AstroEvent; }
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between items-baseline border-b border-border/40 py-1 gap-2">
-      <span className="text-[10px] text-muted-foreground font-mono shrink-0">{label}</span>
-      <span className="text-[10px] text-foreground font-mono text-right">{value}</span>
+    <div className="flex items-baseline border-b border-border/40 py-1 gap-2">
+      <span className="w-32 shrink-0 text-[10px] text-muted-foreground font-mono">{label}</span>
+      <span className="min-w-0 break-words text-[10px] text-foreground font-mono">{value}</span>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { AstroEvent } from "@workspace/api-client-react";
-import { typeLabel } from "@/lib/formatters";
+import { typeLabel, UNKNOWN_TEXT, formatQuantity } from "@/lib/formatters";
 
 interface Props {
   event: AstroEvent;
@@ -37,13 +37,58 @@ function getClassification(event: AstroEvent): string {
   }
 }
 
-function Item({ label, value }: { label: string; value: string }) {
+function Item({ label, value, title }: { label: string; value: string; title?: string }) {
+  const unknown = value === UNKNOWN_TEXT;
   return (
-    <div className="flex items-center justify-between border-b border-border/40 py-1.5 gap-2">
-      <span className="text-[10px] font-mono text-muted-foreground">{label}</span>
-      <span className="text-[10px] font-mono text-foreground text-right">{value}</span>
+    <div className="flex items-baseline border-b border-border/40 py-1.5 gap-2">
+      <span className="w-32 shrink-0 text-[10px] font-mono text-muted-foreground">{label}</span>
+      <span
+        title={title}
+        className={`min-w-0 break-words text-[10px] font-mono ${unknown ? "text-amber-500/80" : "text-foreground"}`}
+      >
+        {value}
+      </span>
     </div>
   );
+}
+
+/**
+ * A magnitude with its unit, or UNKNOWN in words.
+ *
+ * The unit is attached only to a real value. Appending it unconditionally is
+ * how the previous version would have read "Unknown keV", which states a unit
+ * for a quantity that was never measured.
+ */
+function withUnit(
+  v: number | null | undefined,
+  unit: string,
+  render: (n: number) => string = formatQuantity,
+): string {
+  if (v == null || !Number.isFinite(v)) return UNKNOWN_TEXT;
+  return unit ? `${render(v)} ${unit}` : render(v);
+}
+
+/**
+ * Altitude at the event's detection time, from the configured observing site.
+ *
+ * This is the first row on this card sourced from `event.derived` rather than
+ * a flat column. Every UNKNOWN carries the backend's own reason rather than a
+ * sentence written here — the pipeline distinguishes "no site configured"
+ * from "event has no sky position", and those are different problems.
+ */
+function observability(event: AstroEvent): { value: string; title?: string } {
+  const obs = event.derived?.observability;
+  if (!obs) {
+    return { value: UNKNOWN_TEXT, title: "No observability block on this event." };
+  }
+  if (!obs.available || obs.altitudeDeg == null) {
+    return { value: UNKNOWN_TEXT, title: obs.reason ?? undefined };
+  }
+  const alt = `${formatQuantity(obs.altitudeDeg)}°`;
+  return {
+    value: obs.aboveHorizon ? alt : `${alt} (below horizon)`,
+    title: [obs.site?.name, obs.note].filter(Boolean).join(" — ") || undefined,
+  };
 }
 
 export function DerivedParameters({ event }: Props) {
@@ -56,22 +101,29 @@ export function DerivedParameters({ event }: Props) {
   // produced an invented spectral measurement displayed as though observed
   // (e.g. SNR 14.7 -> "135 keV"). Ep must come from the spectral fit in the
   // originating notice, so until that is parsed it is UNKNOWN.
-  const ep = "—";
-  const t90 = event.t90 != null ? event.t90.toFixed(1) : "—";
-  const fluence = event.fluence != null ? event.fluence.toExponential(3) : "—";
-  const peakFlux = event.peakFlux != null ? event.peakFlux.toExponential(3) : "—";
-  const chirpMass = event.chirpMass != null ? event.chirpMass.toFixed(2) : "—";
-  const lumDist = event.luminosityDistance != null ? event.luminosityDistance.toFixed(0) : "—";
+  const ep = UNKNOWN_TEXT;
+  const t90 = withUnit(event.t90, "s", (n) => n.toFixed(1));
+  const fluence = withUnit(event.fluence, "erg/cm²", (n) => n.toExponential(3));
+  const peakFlux = withUnit(event.peakFlux, "");
+  const chirpMass = withUnit(event.chirpMass, "M☉", (n) => n.toFixed(2));
+  const lumDist = withUnit(event.luminosityDistance, "Mpc", (n) => n.toFixed(0));
+  const dm = withUnit(event.dm, "pc/cm³", (n) => n.toFixed(1));
+  const obs = observability(event);
 
   return (
     <div className="rounded border border-border bg-card p-3 space-y-1.5">
       <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Derived parameters</div>
-      {event.eventType === "GRB" && <Item label="Ep" value={`${ep} keV`} />}
-      {event.eventType !== "GW" && <Item label="T90" value={`${t90} s`} />}
-      {event.eventType === "GRB" && <Item label="Fluence" value={`${fluence} erg/cm²`} />}
+      {event.eventType === "GRB" && <Item label="Ep" value={ep} />}
+      {event.eventType !== "GW" && <Item label="T90" value={t90} />}
+      {event.eventType === "GRB" && <Item label="Fluence" value={fluence} />}
       {event.eventType !== "GW" && <Item label="Peak Flux" value={peakFlux} />}
-      {event.eventType === "GW" && <Item label="Chirp Mass" value={`${chirpMass} M☉`} />}
-      {event.eventType === "GW" && <Item label="Lum. Dist" value={`${lumDist} Mpc`} />}
+      {event.eventType === "GW" && <Item label="Chirp Mass" value={chirpMass} />}
+      {event.eventType === "GW" && <Item label="Lum. Dist" value={lumDist} />}
+      {/* Dispersion measure is the defining observable of an FRB and is
+          meaningless for every other type here, so it is shown for FRBs
+          alone rather than for everything that is not a GW. */}
+      {event.eventType === "FRB" && <Item label="DM" value={dm} />}
+      <Item label="Observability" value={obs.value} title={obs.title} />
       <Item label="Classification" value={getClassification(event)} />
     </div>
   );

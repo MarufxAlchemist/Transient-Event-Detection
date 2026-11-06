@@ -3,6 +3,10 @@ import {
   Sigma, Globe2, Telescope, Ruler, ChevronRight, AlertCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type {
+  DerivedQuantity, CosmologyStamp, DerivedScience,
+} from "@workspace/api-client-react";
+import { formatQuantity as fmt, UNKNOWN_TEXT } from "@/lib/formatters";
 
 /**
  * DerivedSciencePanel
@@ -21,57 +25,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
  * were computed differently.
  */
 
-type Provenance = "OBSERVED" | "DERIVED" | "INFERRED" | "CATALOG" | "UNKNOWN";
-
-interface DerivedQuantity {
-  value: number | null;
-  unit: string | null;
-  provenance: Provenance;
-  sigma?: number | null;
-  uncertaintyKnown?: boolean;
-  method?: string | null;
-  assumptions?: string[];
-  inputs?: Record<string, unknown>;
-  requires?: string[];
-  note?: string | null;
-}
-
-interface CosmologyStamp {
-  name: string;
-  H0: number;
-  Om0: number;
-  flat: boolean;
-  reference: string;
-  available: boolean;
-  reason?: string;
-}
-
-interface Observability {
-  available: boolean;
-  site: { name: string; latDeg: number; lonDeg: number; elevM: number } | null;
-  atTime: string | null;
-  altitudeDeg: number | null;
-  azimuthDeg: number | null;
-  airmass: number | null;
-  aboveHorizon: boolean | null;
-  reason: string | null;
-  note: string | null;
-}
-
-interface Derived {
+/**
+ * The shapes below come from the generated API schema rather than being
+ * redeclared here. They were previously copied into this file, which meant a
+ * change to the backend contract silently stopped being type-checked against
+ * this panel.
+ */
+/** Local view of the derived block, indexable for the generic row loops. */
+type Derived = DerivedScience & {
   restFrame?: Record<string, DerivedQuantity>;
-  cosmological?: { cosmology: CosmologyStamp } & Record<string, DerivedQuantity | CosmologyStamp>;
-  localization?: {
-    reported?: {
-      radiusArcmin: number | null;
-      radiusDeg: number | null;
-      containment: string | null;
-      containmentStated: boolean;
-      note?: string | null;
-    };
-  } & Record<string, unknown>;
-  observability?: Observability;
-}
+  localization?: Record<string, unknown>;
+};
 
 const LABELS: Record<string, string> = {
   t90Rest: "Rest-frame T90",
@@ -92,12 +56,6 @@ const CONTAINMENT_LABELS: Record<string, string> = {
   "90_2D": "90% credible region",
   "95_2D": "95% credible region",
 };
-
-function fmt(v: number): string {
-  const a = Math.abs(v);
-  if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(3);
-  return v.toLocaleString(undefined, { maximumSignificantDigits: 5 });
-}
 
 function QuantityRow({ name, q }: { name: string; q: DerivedQuantity }) {
   const [open, setOpen] = useState(false);
@@ -124,7 +82,7 @@ function QuantityRow({ name, q }: { name: string; q: DerivedQuantity }) {
           ) : (
             /* Absence is stated in words. A dash would read as "zero-ish". */
             <span className="text-xs uppercase tracking-wider text-amber-500/80 font-medium">
-              Unknown
+              {UNKNOWN_TEXT}
             </span>
           )}
           <ChevronRight

@@ -4,6 +4,34 @@ import { format } from "date-fns";
 export const UNKNOWN_LABEL = "—";
 
 /**
+ * Absence stated in words, for a quantity shown as its own labelled row.
+ *
+ * A dash reads as "zero-ish" next to a number. Where there is room for the
+ * word, UNKNOWN means UNKNOWN and says so. `UNKNOWN_LABEL` remains the form
+ * for the dense Basic Info table, where a column of repeated words would
+ * drown the values that ARE present.
+ *
+ * Shared so DerivedParameters and DerivedSciencePanel cannot disagree about
+ * how the same absence looks — they previously did, one rendering a dash and
+ * the other the word, for the identical missing quantity.
+ */
+export const UNKNOWN_TEXT = "Unknown";
+
+/**
+ * Render a derived quantity's magnitude.
+ *
+ * Moved here from DerivedSciencePanel so both components format the same
+ * number identically. Very small and very large values go to exponential
+ * notation, where a fixed number of decimal places would print 0.000 or a
+ * wall of digits.
+ */
+export function formatQuantity(v: number): string {
+  const a = Math.abs(v);
+  if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(3);
+  return v.toLocaleString(undefined, { maximumSignificantDigits: 5 });
+}
+
+/**
  * Format a possibly-null DERIVED scientific quantity.
  *
  * A null value means UNKNOWN: the pipeline could not responsibly derive it.

@@ -101,15 +101,23 @@ export function SciencePanel({ event }: Props) {
           <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin pr-1 space-y-3">
             <ScientificSummary event={event} />
             <EventTimeline event={event} />
-            <DerivedParameters event={event} />
+            {/* Derived parameters and Basic Info sit side by side once the
+                panel is wide enough for two readable columns, and stack below
+                that. The dashboard reserves 208px + 288px of fixed side rails,
+                so this column is roughly the viewport minus ~520px — xl is the
+                first breakpoint where each half still fits a label column and
+                its value without wrapping. */}
+            <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
+              <DerivedParameters event={event} />
+
+              <div className="rounded border border-border bg-card">
+                <BasicInfo event={event} />
+              </div>
+            </div>
 
             <div className="flex items-center gap-2 rounded border border-border bg-card px-3 py-2 text-[9px] font-mono text-muted-foreground">
               <span>Pipeline</span>
               <span className="text-foreground">PENDING</span>
-            </div>
-
-            <div className="rounded border border-border bg-card">
-              <BasicInfo event={event} />
             </div>
           </div>
         )}
