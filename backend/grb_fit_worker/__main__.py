@@ -23,7 +23,7 @@ import traceback
 
 import psycopg2
 
-from . import db
+from . import db, pipeline_sync
 from .pipeline_runner import FitInputError, run_fit
 from .validation import validate_fit
 
@@ -49,7 +49,7 @@ def _request_shutdown(signum, _frame):
 
 def process_one(conn) -> bool:
     """Claim and process a single job. True if one was found."""
-    job = db.claim_job(conn)
+    job = db.claim_job(conn, pipeline_sync.current_pipeline_sha())
     if job is None:
         return False
 
@@ -103,6 +103,48 @@ def process_one(conn) -> bool:
     return True
 
 
+def process_pipeline_sync(conn) -> bool:
+    """Claim and resolve a single pipeline sync/rollback request. True if found.
+
+    Only ever attempted when process_one() found no fit job to claim (see
+    main()'s loop) — a sync never runs concurrently with a fit.
+    """
+    request = db.claim_pipeline_sync(conn)
+    if request is None:
+        return False
+
+    LOG.info("claimed pipeline %s request %s", request["action"], request["id"])
+    try:
+        if request["action"] == "rollback":
+            result = pipeline_sync.rollback(target_sha=request.get("to_sha"))
+        else:
+            result = pipeline_sync.sync_pipeline()
+        db.finish_pipeline_sync(
+            conn, request["id"],
+            status=result.status, from_sha=result.from_sha,
+            to_sha=result.to_sha, message=result.message,
+        )
+        LOG.info(
+            "pipeline request %s finished: %s (%s -> %s)",
+            request["id"], result.status, result.from_sha, result.to_sha,
+        )
+    except pipeline_sync.SyncError as exc:
+        LOG.warning("pipeline request %s refused: %s", request["id"], exc)
+        db.finish_pipeline_sync(
+            conn, request["id"],
+            status=exc.status, from_sha=pipeline_sync.get_active_sha(),
+            to_sha=None, message=str(exc),
+        )
+    except Exception as exc:  # noqa: BLE001 — the loop must survive anything
+        LOG.error("pipeline request %s failed: %s", request["id"], exc)
+        db.finish_pipeline_sync(
+            conn, request["id"],
+            status="failed", from_sha=pipeline_sync.get_active_sha(),
+            to_sha=None, message=f"{type(exc).__name__}: {exc}",
+        )
+    return True
+
+
 def main() -> int:
     logging.basicConfig(
         level=os.environ.get("GRB_FIT_LOG_LEVEL", "INFO").upper(),
@@ -114,7 +156,7 @@ def main() -> int:
 
     LOG.info(
         "starting | poll=%ss DATA_BASE=%s pipeline=%s",
-        POLL_INTERVAL, DATA_BASE, os.environ.get("GRB_PIPELINE_VERSION", "unset"),
+        POLL_INTERVAL, DATA_BASE, pipeline_sync.current_pipeline_sha() or "unset",
     )
 
     conn = db.connect()
@@ -133,6 +175,19 @@ def main() -> int:
                 time.sleep(POLL_INTERVAL)
                 conn = db.connect()
                 continue
+
+            if not worked and not _shutdown:
+                try:
+                    worked = process_pipeline_sync(conn)
+                except psycopg2.Error as exc:
+                    LOG.error("database error, reconnecting: %s", exc)
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    time.sleep(POLL_INTERVAL)
+                    conn = db.connect()
+                    continue
 
             if not worked and not _shutdown:
                 time.sleep(POLL_INTERVAL)

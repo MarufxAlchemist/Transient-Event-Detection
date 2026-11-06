@@ -295,11 +295,23 @@ services:
       # Also set in the image; repeated here so `docker compose logs -f` stays
       # live even if someone overrides the entrypoint.
       PYTHONUNBUFFERED: "1"
+      # Runtime pipeline sync (see backend/grb_fit_worker/pipeline_sync.py).
+      # Unset GRB_PIPELINE_REPO_URL is a complete no-op — the worker stays on
+      # whatever this image baked in and never attempts a sync.
+      GRB_PIPELINE_REPO_URL: ${GRB_PIPELINE_REPO_URL:-}
+      GRB_PIPELINE_REF: ${GRB_PIPELINE_REF:-main}
+      GRB_PIPELINE_GIT_TOKEN: ${GRB_PIPELINE_GIT_TOKEN:-}
+      GRB_PIPELINE_RELEASES_DIR: /workspace/pipeline-releases
+      GRB_PIPELINE_KEEP: ${GRB_PIPELINE_KEEP:-5}
+      GRB_PIPELINE_ALLOW_NO_CONTRACT: ${GRB_PIPELINE_ALLOW_NO_CONTRACT:-0}
 
     volumes:
       # Fetching ~14 TTE files per burst from HEASARC takes minutes. The cache
       # must outlive the container or every restart re-downloads the archive.
       - grb_fit_data:/workspace/data
+      # Synced pipeline releases — must outlive the container or every restart
+      # loses the last sync and falls back to the image's baked-in checkout.
+      - grb_pipeline_releases:/workspace/pipeline-releases
 
     depends_on:
       postgres:
@@ -402,6 +414,13 @@ volumes:
     # so wiping this volume orphans those paths — the database rows survive
     # with their raw_params intact, but the raw posteriors would need refitting.
     # To wipe: docker compose down -v
+
+  grb_pipeline_releases:
+    # Synced fermi-gbm-analysis releases (see
+    # backend/grb_fit_worker/pipeline_sync.py) plus the `current` symlink and
+    # activation log. Wiping this volume loses sync/rollback history; the
+    # worker re-bootstraps from the image's own baked-in checkout on next
+    # start. To wipe: docker compose down -v
 
   postgres_backups:
     # pg_dump backup files — populated by the backup service (profile=backup).

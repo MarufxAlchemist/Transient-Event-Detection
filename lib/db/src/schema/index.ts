@@ -128,6 +128,7 @@ export {
   grbSpectralFits,
   grbValidationFlags,
   grbLiteratureRefs,
+  grbPipelineSyncs,
   grbFitJobsRelations,
   grbSpectralFitsRelations,
   grbValidationFlagsRelations,
@@ -136,6 +137,8 @@ export {
   GRB_FIT_MODES,
   GRB_BAND_FAMILY_MODELS,
   GRB_VALIDATION_SEVERITIES,
+  GRB_PIPELINE_SYNC_ACTIONS,
+  GRB_PIPELINE_SYNC_STATUSES,
 } from "./grbFits.js";
 export type {
   GrbFitJob,
@@ -151,6 +154,10 @@ export type {
   GrbFitMode,
   GrbBandFamilyModel,
   GrbValidationSeverity,
+  GrbPipelineSync,
+  InsertGrbPipelineSync,
+  GrbPipelineSyncAction,
+  GrbPipelineSyncStatus,
 } from "./grbFits.js";
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────

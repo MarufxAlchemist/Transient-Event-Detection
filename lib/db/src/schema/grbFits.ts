@@ -175,6 +175,8 @@ export const grbFitJobs = coreSchema.table(
     attempts: integer("attempts").notNull().default(0),
     /** Exception text from the failed attempt. NULL while the job is healthy. */
     error: text("error"),
+    /** Full git SHA of the fermi-gbm-analysis release this job was claimed against. */
+    pipelineSha: text("pipeline_sha"),
 
     requestedAt: timestamp("requested_at", { withTimezone: true })
       .notNull()
@@ -494,6 +496,68 @@ export const grbLiteratureRefs = coreSchema.table(
 
 export type GrbLiteratureRef = typeof grbLiteratureRefs.$inferSelect;
 export type InsertGrbLiteratureRef = typeof grbLiteratureRefs.$inferInsert;
+
+// ─── Runtime pipeline sync (migration 0028) ────────────────────────────────
+
+/**
+ * Requests to sync or roll back the grb-fit-worker pipeline release at
+ * runtime (see backend/grb_fit_worker/pipeline_sync.py). The API only ever
+ * inserts a 'pending' row; every actual git/filesystem operation happens in
+ * the worker, which claims the row and writes back its outcome.
+ */
+export const GRB_PIPELINE_SYNC_ACTIONS = ["sync", "rollback"] as const;
+
+export type GrbPipelineSyncAction = (typeof GRB_PIPELINE_SYNC_ACTIONS)[number];
+
+export const GRB_PIPELINE_SYNC_STATUSES = [
+  "pending",
+  "running",
+  "activated",
+  "rolled_back",
+  "up_to_date",
+  "needs_image_rebuild",
+  "contract_check_missing",
+  "contract_check_failed",
+  "fetch_failed",
+  "unknown_sha",
+  "no_previous_release",
+  "config_error",
+  "sync_failed",
+  "busy",
+  "failed",
+] as const;
+
+export type GrbPipelineSyncStatus = (typeof GRB_PIPELINE_SYNC_STATUSES)[number];
+
+export const grbPipelineSyncs = coreSchema.table(
+  "grb_pipeline_syncs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    action: text("action").notNull().default("sync").$type<GrbPipelineSyncAction>(),
+    requestedBy: text("requested_by").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    status: text("status").notNull().default("pending").$type<GrbPipelineSyncStatus>(),
+    /**
+     * Pending row: explicit rollback target requested (null = previous
+     * release, or n/a for a sync). Finished row: the SHA actually activated.
+     */
+    fromSha: text("from_sha"),
+    toSha: text("to_sha"),
+    message: text("message"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("grb_pipeline_syncs_pending_idx")
+      .on(t.status, t.requestedAt)
+      .where(sql`${t.status} = 'pending'`),
+    index("grb_pipeline_syncs_requested_at_idx").on(t.requestedAt, t.id),
+  ],
+);
+
+export type GrbPipelineSync = typeof grbPipelineSyncs.$inferSelect;
+export type InsertGrbPipelineSync = typeof grbPipelineSyncs.$inferInsert;
 
 // ─── Relations ───────────────────────────────────────────────────────────────
 

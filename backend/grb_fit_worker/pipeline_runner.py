@@ -129,115 +129,118 @@ def run_fit(*, job: dict, event: dict, data_base: str | None = None) -> dict:
     Raises FitInputError for inputs that cannot be fitted, and lets pipeline
     exceptions propagate — the caller records either as a job failure.
     """
-    from pipeline.fitting import extract_params, resolve_fit_dets
-    from pipeline.paths import active_fit_dir, extraction_fingerprint, fit_fingerprint
-    from pipeline.runner import GRBPipelineRunner
+    from . import pipeline_sync
 
-    for field in ("ra", "dec", "utc"):
-        if event.get(field) is None:
+    with pipeline_sync.activate_for_job() as pipeline_sha:
+        from pipeline.fitting import extract_params, resolve_fit_dets
+        from pipeline.paths import active_fit_dir, extraction_fingerprint, fit_fingerprint
+        from pipeline.runner import GRBPipelineRunner
+
+        for field in ("ra", "dec", "utc"):
+            if event.get(field) is None:
+                raise FitInputError(
+                    f"Event {event.get('event_id')!r} has no {field}; a fit needs a "
+                    "sky position and a trigger time to select detectors and "
+                    "generate a response."
+                )
+
+        t1, t2 = resolve_window(job, event)
+        model = job["model"]
+        nlive = int(job["nlive"])
+        include_bgo = job["detector_cfg"] == "nai_bgo"
+
+        # The pipeline names the on-disk directory after this, so it must be
+        # stable per event. The catalog name when we have one, else the GCN id.
+        name = job.get("grb_name") or event["event_id"]
+
+        ctx = build_context(
+            name=name,
+            ra=event["ra"],
+            dec=event["dec"],
+            utc=event["utc"],
+            t1=t1,
+            t2=t2,
+            data_base=data_base,
+        )
+
+        runner = GRBPipelineRunner(
+            n_workers=1,          # single concurrency by design
+            model_name=model,
+            nlive=nlive,
+            include_bgo=include_bgo,
+        )
+
+        # load() = retrieve TTE/poshist + resolve_detectors(). With
+        # det_mode='auto' this is where a non-catalog burst gets its detectors.
+        ctx = runner.load(ctx)
+        if not ctx.sel_dets or len(ctx.sel_dets) < 2:
             raise FitInputError(
-                f"Event {event.get('event_id')!r} has no {field}; a fit needs a "
-                "sky position and a trigger time to select detectors and "
-                "generate a response."
+                f"Detector auto-selection produced {ctx.sel_dets!r} for {name}; a "
+                "spectral fit needs at least two."
             )
 
-    t1, t2 = resolve_window(job, event)
-    model = job["model"]
-    nlive = int(job["nlive"])
-    include_bgo = job["detector_cfg"] == "nai_bgo"
+        # 'params' is deliberately omitted: run() would call extract_params and
+        # discard the DataFrame, so we call it ourselves below and keep the result.
+        runner.run(ctx, stages="geometry,spectra_tint,fit_tint")
 
-    # The pipeline names the on-disk directory after this, so it must be stable
-    # per event. The catalog name when we have one, else the GCN id.
-    name = job.get("grb_name") or event["event_id"]
+        df = extract_params(
+            ctx, model_name=model, mode="tintegrated", nlive=nlive, include_bgo=include_bgo
+        )
+        if df is None or len(df) == 0:
+            raise FitInputError(
+                f"extract_params returned nothing for {name}; the fit produced no "
+                "posterior to summarise."
+            )
 
-    ctx = build_context(
-        name=name,
-        ra=event["ra"],
-        dec=event["dec"],
-        utc=event["utc"],
-        t1=t1,
-        t2=t2,
-        data_base=data_base,
-    )
+        row = {k: _clean(v) for k, v in df.iloc[0].to_dict().items()}
 
-    runner = GRBPipelineRunner(
-        n_workers=1,          # single concurrency by design
-        model_name=model,
-        nlive=nlive,
-        include_bgo=include_bgo,
-    )
-
-    # load() = retrieve TTE/poshist + resolve_detectors(). With det_mode='auto'
-    # this is where a non-catalog burst gets its detector set.
-    ctx = runner.load(ctx)
-    if not ctx.sel_dets or len(ctx.sel_dets) < 2:
-        raise FitInputError(
-            f"Detector auto-selection produced {ctx.sel_dets!r} for {name}; a "
-            "spectral fit needs at least two."
+        # Recompute the fit's on-disk identity exactly the way the pipeline
+        # does, rather than reconstructing the key format by hand —
+        # extract_params switches between two key spellings depending on
+        # whether the fit landed in the canonical directory or a versioned one.
+        fit_dets = resolve_fit_dets(ctx, include_bgo=include_bgo)
+        fit_fp = fit_fingerprint(ctx, model, {}, nlive, fit_dets=fit_dets)
+        model_root = os.path.join(ctx.paths.bayspec_tintegrated_path, model)
+        fit_dir = active_fit_dir(model_root, fit_fp, f"canonical_fit_{model}")
+        hdf5_key = (
+            f"tint_{model}_{ctx.name}"
+            if fit_dir == model_root
+            else f"tint_{model}_{fit_fp}_{ctx.name}"
         )
 
-    # 'params' is deliberately omitted: run() would call extract_params and
-    # discard the DataFrame, so we call it ourselves below and keep the result.
-    runner.run(ctx, stages="geometry,spectra_tint,fit_tint")
-
-    df = extract_params(
-        ctx, model_name=model, mode="tintegrated", nlive=nlive, include_bgo=include_bgo
-    )
-    if df is None or len(df) == 0:
-        raise FitInputError(
-            f"extract_params returned nothing for {name}; the fit produced no "
-            "posterior to summarise."
-        )
-
-    row = {k: _clean(v) for k, v in df.iloc[0].to_dict().items()}
-
-    # Recompute the fit's on-disk identity exactly the way the pipeline does,
-    # rather than reconstructing the key format by hand — extract_params
-    # switches between two key spellings depending on whether the fit landed in
-    # the canonical directory or a versioned one.
-    fit_dets = resolve_fit_dets(ctx, include_bgo=include_bgo)
-    fit_fp = fit_fingerprint(ctx, model, {}, nlive, fit_dets=fit_dets)
-    model_root = os.path.join(ctx.paths.bayspec_tintegrated_path, model)
-    fit_dir = active_fit_dir(model_root, fit_fp, f"canonical_fit_{model}")
-    hdf5_key = (
-        f"tint_{model}_{ctx.name}"
-        if fit_dir == model_root
-        else f"tint_{model}_{fit_fp}_{ctx.name}"
-    )
-
-    return {
-        "model": model,
-        "detector_cfg": job["detector_cfg"],
-        "mode": "tintegrated",
-        "fit_dets": list(fit_dets),
-        "include_bgo": include_bgo,
-        "nlive": nlive,
-        "t1": t1,
-        "t2": t2,
-        # Asymmetric OFFSETS, stored exactly as produced. Converting these to
-        # bounds would silently misstate every uncertainty downstream.
-        "alpha": row.get("alpha"),
-        "alpha_low": row.get("alpha_low"),
-        "alpha_high": row.get("alpha_high"),
-        "beta": row.get("beta"),
-        "beta_low": row.get("beta_low"),
-        "beta_high": row.get("beta_high"),
-        "ep_best": row.get("Ep_best"),
-        "ep_low": row.get("Ep_low"),
-        "ep_high": row.get("Ep_high"),
-        "amplitude": row.get("A"),
-        "vfv_best": row.get("vFv_best"),
-        "vfv_low": row.get("vFv_low"),
-        "vfv_high": row.get("vFv_high"),
-        "ep_constrained": _opt_bool(row, "ep_constrained"),
-        "log_ep_hits_prior_low": _opt_bool(row, "log_Ep_hits_prior_low"),
-        "log_ep_hits_prior_high": _opt_bool(row, "log_Ep_hits_prior_high"),
-        "hdf5_path": ctx.paths.bayspec_data,
-        "hdf5_key": hdf5_key,
-        "fit_dir": fit_dir,
-        "fit_fingerprint": fit_fp,
-        "extraction_fingerprint": extraction_fingerprint(ctx),
-        "pipeline_version": os.environ.get("GRB_PIPELINE_VERSION"),
-        "raw_params": row,
-        "sel_dets": list(ctx.sel_dets),
-    }
+        return {
+            "model": model,
+            "detector_cfg": job["detector_cfg"],
+            "mode": "tintegrated",
+            "fit_dets": list(fit_dets),
+            "include_bgo": include_bgo,
+            "nlive": nlive,
+            "t1": t1,
+            "t2": t2,
+            # Asymmetric OFFSETS, stored exactly as produced. Converting these
+            # to bounds would silently misstate every uncertainty downstream.
+            "alpha": row.get("alpha"),
+            "alpha_low": row.get("alpha_low"),
+            "alpha_high": row.get("alpha_high"),
+            "beta": row.get("beta"),
+            "beta_low": row.get("beta_low"),
+            "beta_high": row.get("beta_high"),
+            "ep_best": row.get("Ep_best"),
+            "ep_low": row.get("Ep_low"),
+            "ep_high": row.get("Ep_high"),
+            "amplitude": row.get("A"),
+            "vfv_best": row.get("vFv_best"),
+            "vfv_low": row.get("vFv_low"),
+            "vfv_high": row.get("vFv_high"),
+            "ep_constrained": _opt_bool(row, "ep_constrained"),
+            "log_ep_hits_prior_low": _opt_bool(row, "log_Ep_hits_prior_low"),
+            "log_ep_hits_prior_high": _opt_bool(row, "log_Ep_hits_prior_high"),
+            "hdf5_path": ctx.paths.bayspec_data,
+            "hdf5_key": hdf5_key,
+            "fit_dir": fit_dir,
+            "fit_fingerprint": fit_fp,
+            "extraction_fingerprint": extraction_fingerprint(ctx),
+            "pipeline_version": pipeline_sha,
+            "raw_params": row,
+            "sel_dets": list(ctx.sel_dets),
+        }

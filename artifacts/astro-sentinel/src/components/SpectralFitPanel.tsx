@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/AuthContext";
 import { UNKNOWN_LABEL, formatExp, formatMeasured } from "@/lib/formatters";
+import { GrbPipelineSyncPanel } from "@/components/GrbPipelineSyncPanel";
 
 /**
  * SpectralFitPanel
@@ -344,6 +345,8 @@ export function SpectralFitPanel({ eventId, fluence, t90 }: Props) {
       </CardHeader>
 
       <CardContent className="space-y-5">
+        <GrbPipelineSyncPanel />
+
         {/* ── Reported vs fitted ─────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-4 pb-4 border-b border-border">
           <div>
@@ -725,6 +728,9 @@ export function SpectralFitPanel({ eventId, fluence, t90 }: Props) {
                 >
                   <span>
                     {f.model} · {f.fitDets.join(",")} · {f.t1}–{f.t2}s
+                    {f.pipelineVersion && (
+                      <span className="opacity-60"> · pipeline {f.pipelineVersion.slice(0, 8)}</span>
+                    )}
                   </span>
                   <span className="flex items-center gap-2">
                     Ep {f.epBest.toFixed(1)} keV
